@@ -2,8 +2,41 @@ import { LogEntry } from "./types.js";
 import { deepDelete, sleep } from "../utils/general.js";
 import chalk from "chalk";
 import { google } from "@ai-sdk/google";
-import { generateText } from "ai";
+import { generateText, tool } from "ai";
 import process from "process";
+import { loadLogs } from "../services/logsAndChangesService.js";
+
+const createTicketTool = tool({
+  description: "Create a lightweight ticket for a suspected production issue.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {
+      title: { type: "string" as const },
+      summary: { type: "string" as const },
+      severity: { type: "string" as const, enum: ["low", "medium", "high"] },
+    },
+    required: ["title", "summary", "severity"],
+  },
+  execute: async ({
+    title,
+    summary,
+    severity,
+  }: {
+    title: string;
+    summary: string;
+    severity: "low" | "medium" | "high";
+  }) => {
+    const ticketId = `TICKET-${Math.floor(1000 + Math.random() * 9000)}`;
+    console.log(chalk.yellow(`📝 createTicket -> ${ticketId} (${severity})`));
+    return {
+      ok: true,
+      ticketId,
+      title,
+      summary,
+      severity,
+    };
+  },
+});
 
 export class LogTriageAgent {
   private logsFileNumber: number;
@@ -28,7 +61,8 @@ export class LogTriageAgent {
       );
     }
 
-    const recentLogs = this.logs.slice(-5);
+    const allLogs = await loadLogs(this.logsFileNumber);
+    const recentLogs = allLogs.slice(-5);
     const recentLogsText = recentLogs
       .map(
         (entry) =>
@@ -68,7 +102,21 @@ export class LogTriageAgent {
         model: google("gemini-1.5-flash"),
         system: systemPrompt,
         messages,
+        tools: {
+          createTicket: createTicketTool,
+        },
+        toolChoice: "auto",
       });
+
+      if (response.toolCalls?.length) {
+        console.log(
+          chalk.yellow(
+            `\n🛠️ Tool call(s) requested: ${response.toolCalls
+              .map((call) => call.toolName)
+              .join(", ")}`,
+          ),
+        );
+      }
 
       finalText = response.text?.trim() || "";
 

@@ -1,4 +1,4 @@
-import { LogEntry, RecentChanges } from '../agent/types';
+import { LogEntry, RecentChanges } from '../agent/types.js';
 
 const getLogsAndChanges = async (logFileNumber: number): Promise<{ logs: LogEntry[], changes: RecentChanges[] }> => {
     const getLogFileName = () => `log_set_${logFileNumber}.ts`;
