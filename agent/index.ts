@@ -1,23 +1,20 @@
-import { LogEntry } from "./types.js";
-import { deepDelete, sleep } from "../utils/general.js";
-import chalk from "chalk";
-import { google } from "@ai-sdk/google";
-import { generateText, tool, jsonSchema } from "ai";
-import process from "process";
-import { loadLogs } from "../services/logsAndChangesService.js";
+import { tool, generateText, zodSchema } from "ai";
 import { z } from "zod";
+import chalk from "chalk";
+import { LogEntry } from "./types.js";
+import "dotenv/config";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { loadLogs } from "../services/logsAndChangesService.js";
 
-const createTicketTool = {
+const createTicketTool = tool({
   description: "Create a lightweight ticket for a suspected production issue.",
-  inputSchema: jsonSchema({
-    type: "object",
-    properties: {
-      title: { type: "string" },
-      summary: { type: "string" },
-      severity: { type: "string" },
-    },
-    required: ["title", "summary", "severity"],
-  }),
+  inputSchema: zodSchema(
+    z.object({
+      title: z.string().describe("Concise title of the incident"),
+      summary: z.string().describe("Root cause summary based on evidence"),
+      severity: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]),
+    }),
+  ),
   execute: async ({
     title,
     summary,
@@ -25,27 +22,23 @@ const createTicketTool = {
   }: {
     title: string;
     summary: string;
-    severity: string;
+    severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   }) => {
     const ticketId = `TICKET-${Math.floor(1000 + Math.random() * 9000)}`;
-    console.log(chalk.yellow(`📝 createTicket -> ${ticketId} (${severity})`));
-    return {
-      ok: true,
-      ticketId,
-      title,
-      summary,
-      severity,
-    };
+    console.log(
+      chalk.yellow(
+        `📝 [Tool Action] Ticket Created: ${ticketId} (${severity})`,
+      ),
+    );
+    return { ok: true, ticketId, title, summary, severity };
   },
-};
+});
 
 export class LogTriageAgent {
   private logsFileNumber: number;
-  private logs: LogEntry[];
 
-  constructor(logsFileNumber: number, logs: LogEntry[]) {
+  constructor(logsFileNumber: number, _logs: LogEntry[]) {
     this.logsFileNumber = logsFileNumber;
-    this.logs = logs;
   }
 
   async run(): Promise<string> {
@@ -58,12 +51,14 @@ export class LogTriageAgent {
     const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim();
     if (!apiKey) {
       throw new Error(
-        "Missing GOOGLE_GENERATIVE_AI_API_KEY. Please add it to your .env file.",
+        "Missing GOOGLE_GENERATIVE_AI_API_KEY in your .env file.",
       );
     }
 
+    const google = createGoogleGenerativeAI({ apiKey });
     const allLogs = await loadLogs(this.logsFileNumber);
-    const recentLogs = allLogs.slice(-5);
+    const maxContextLogs = 5;
+    const recentLogs = allLogs.slice(-maxContextLogs);
     const recentLogsText = recentLogs
       .map(
         (entry) =>
@@ -73,61 +68,31 @@ export class LogTriageAgent {
 
     const systemPrompt = [
       "You are an expert Senior Site Reliability Engineer (SRE) specializing in log analysis.",
-      "Investigate the most recent logs carefully.",
-      "Prefer concise, evidence-based summaries.",
-      "Do not invent facts. If the evidence is insufficient, say so clearly.",
-      "For now, reason from the provided logs only.",
+      "Investigate the provided logs carefully and prefer concise, evidence-based summaries.",
+      "Do not invent facts. If you identify a clear incident, create a ticket using the createTicket tool.",
     ].join(" ");
 
-    const initialMessages = [
-      { role: "system" as const, content: systemPrompt },
-      {
-        role: "user" as const,
-        content: [
-          `Analyze the following recent production logs for Log Set #${this.logsFileNumber}.`,
-          "Use the last 5 log entries only as the initial context to preserve token efficiency.",
-          "",
-          recentLogsText,
-        ].join("\n"),
+    const response = await generateText({
+      model: google("gemini-1.5-flash"),
+      system: systemPrompt,
+      prompt: `Analyze the following recent production logs for Log Set #${this.logsFileNumber}:\n\n${recentLogsText}`,
+      tools: {
+        createTicket: createTicketTool,
       },
-    ];
+      toolChoice: "auto",
+    });
 
-    const maxSteps = 3;
-    let messages = initialMessages;
-    let finalText = "";
-
-    for (let step = 1; step <= maxSteps; step += 1) {
-      console.log(chalk.gray(`\n🧠 Step ${step}/${maxSteps}`));
-
-      const response = await generateText({
-        model: google("gemini-1.5-flash"),
-        system: systemPrompt,
-        messages,
-        tools: {
-          createTicket: createTicketTool,
-        },
-        toolChoice: "auto",
-      });
-
-      if (response.toolCalls?.length) {
-        console.log(
-          chalk.yellow(
-            `\n🛠️ Tool call(s) requested: ${response.toolCalls
-              .map((call) => call.toolName)
-              .join(", ")}`,
-          ),
-        );
-      }
-
-      finalText = response.text?.trim() || "";
-
-      if (finalText) {
-        console.log(chalk.green(`\n🤖 Agent Response:\n${finalText}`));
-      }
-
-      break;
+    if (response.toolCalls?.length) {
+      console.log(
+        chalk.yellow(
+          `\n🛠️ Tool call(s) requested: ${response.toolCalls
+            .map((call) => call.toolName)
+            .join(", ")}`,
+        ),
+      );
     }
 
-    return finalText || "No analysis available.";
+    console.log(chalk.green(`\n🤖 Agent Final Answer:\n${response.text}`));
+    return response.text || "No analysis generated.";
   }
 }
