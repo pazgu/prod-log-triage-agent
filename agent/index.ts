@@ -2,21 +2,22 @@ import { LogEntry } from "./types.js";
 import { deepDelete, sleep } from "../utils/general.js";
 import chalk from "chalk";
 import { google } from "@ai-sdk/google";
-import { generateText, tool } from "ai";
+import { generateText, tool, jsonSchema } from "ai";
 import process from "process";
 import { loadLogs } from "../services/logsAndChangesService.js";
+import { z } from "zod";
 
-const createTicketTool = tool({
+const createTicketTool = {
   description: "Create a lightweight ticket for a suspected production issue.",
-  inputSchema: {
-    type: "object" as const,
+  inputSchema: jsonSchema({
+    type: "object",
     properties: {
-      title: { type: "string" as const },
-      summary: { type: "string" as const },
-      severity: { type: "string" as const, enum: ["low", "medium", "high"] },
+      title: { type: "string" },
+      summary: { type: "string" },
+      severity: { type: "string" },
     },
     required: ["title", "summary", "severity"],
-  },
+  }),
   execute: async ({
     title,
     summary,
@@ -24,7 +25,7 @@ const createTicketTool = tool({
   }: {
     title: string;
     summary: string;
-    severity: "low" | "medium" | "high";
+    severity: string;
   }) => {
     const ticketId = `TICKET-${Math.floor(1000 + Math.random() * 9000)}`;
     console.log(chalk.yellow(`📝 createTicket -> ${ticketId} (${severity})`));
@@ -36,7 +37,7 @@ const createTicketTool = tool({
       severity,
     };
   },
-});
+};
 
 export class LogTriageAgent {
   private logsFileNumber: number;
@@ -124,8 +125,6 @@ export class LogTriageAgent {
         console.log(chalk.green(`\n🤖 Agent Response:\n${finalText}`));
       }
 
-      // No tools are wired yet, so we stop after the first reasoning pass.
-      // This structure is ready for the later tool-calling phases.
       break;
     }
 
