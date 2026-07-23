@@ -3,6 +3,7 @@ import { deepDelete, sleep } from "../utils/general.js";
 import chalk from "chalk";
 import { google } from "@ai-sdk/google";
 import { generateText } from "ai";
+import process from "process";
 
 export class LogTriageAgent {
   private logsFileNumber: number;
