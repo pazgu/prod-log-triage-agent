@@ -1,7 +1,8 @@
-import { LogEntry } from './types';
-import { deepDelete, sleep } from '../utils/general'; // You will probably want to use these
-import chalk from 'chalk'; // This is just for fun, don't worry about it
-
+import { LogEntry } from "./types.js";
+import { deepDelete, sleep } from "../utils/general.js";
+import chalk from "chalk";
+import { google } from "@ai-sdk/google";
+import { generateText } from "ai";
 
 export class LogTriageAgent {
   private logsFileNumber: number;
@@ -13,7 +14,72 @@ export class LogTriageAgent {
   }
 
   async run(): Promise<string> {
-    return chalk.green(`Implement your agent loop here.
-Make sure to have a breaking condition so it doesn't go on forever and ${chalk.red("burn your tokens")}`); 
+    console.log(
+      chalk.blue(
+        `🚀 Starting investigation for Log Set #${this.logsFileNumber}...`,
+      ),
+    );
+
+    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim();
+    if (!apiKey) {
+      throw new Error(
+        "Missing GOOGLE_GENERATIVE_AI_API_KEY. Please add it to your .env file.",
+      );
+    }
+
+    const recentLogs = this.logs.slice(-5);
+    const recentLogsText = recentLogs
+      .map(
+        (entry) =>
+          `[${entry.time}] ${entry.level} ${entry.service}: ${entry.msg}`,
+      )
+      .join("\n");
+
+    const systemPrompt = [
+      "You are an expert Senior Site Reliability Engineer (SRE) specializing in log analysis.",
+      "Investigate the most recent logs carefully.",
+      "Prefer concise, evidence-based summaries.",
+      "Do not invent facts. If the evidence is insufficient, say so clearly.",
+      "For now, reason from the provided logs only.",
+    ].join(" ");
+
+    const initialMessages = [
+      { role: "system" as const, content: systemPrompt },
+      {
+        role: "user" as const,
+        content: [
+          `Analyze the following recent production logs for Log Set #${this.logsFileNumber}.`,
+          "Use the last 5 log entries only as the initial context to preserve token efficiency.",
+          "",
+          recentLogsText,
+        ].join("\n"),
+      },
+    ];
+
+    const maxSteps = 3;
+    let messages = initialMessages;
+    let finalText = "";
+
+    for (let step = 1; step <= maxSteps; step += 1) {
+      console.log(chalk.gray(`\n🧠 Step ${step}/${maxSteps}`));
+
+      const response = await generateText({
+        model: google("gemini-1.5-flash"),
+        system: systemPrompt,
+        messages,
+      });
+
+      finalText = response.text?.trim() || "";
+
+      if (finalText) {
+        console.log(chalk.green(`\n🤖 Agent Response:\n${finalText}`));
+      }
+
+      // No tools are wired yet, so we stop after the first reasoning pass.
+      // This structure is ready for the later tool-calling phases.
+      break;
+    }
+
+    return finalText || "No analysis available.";
   }
 }
