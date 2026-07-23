@@ -32,13 +32,15 @@ const createTicketTool = tool({
     );
     return { ok: true, ticketId, title, summary, severity };
   },
-});
+} as any);
 
 export class LogTriageAgent {
   private logsFileNumber: number;
+  private readonly initialLogs: LogEntry[];
 
-  constructor(logsFileNumber: number, _logs: LogEntry[]) {
+  constructor(logsFileNumber: number, logs: LogEntry[]) {
     this.logsFileNumber = logsFileNumber;
+    this.initialLogs = logs;
   }
 
   async run(): Promise<string> {
@@ -56,15 +58,19 @@ export class LogTriageAgent {
     }
 
     const google = createGoogleGenerativeAI({ apiKey });
-    const allLogs = await loadLogs(this.logsFileNumber);
+    const contextLogs =
+      this.initialLogs.length > 0
+        ? this.initialLogs
+        : await loadLogs(this.logsFileNumber);
     const maxContextLogs = 5;
-    const recentLogs = allLogs.slice(-maxContextLogs);
-    const recentLogsText = recentLogs
-      .map(
-        (entry) =>
-          `[${entry.time}] ${entry.level} ${entry.service}: ${entry.msg}`,
-      )
-      .join("\n");
+    const recentLogs = contextLogs.slice(-maxContextLogs);
+    const recentLogsText =
+      recentLogs
+        .map(
+          (entry) =>
+            `[${entry.time}] ${entry.level} ${entry.service}: ${entry.msg}`,
+        )
+        .join("\n") || "No recent log entries were provided.";
 
     const systemPrompt = [
       "You are an expert Senior Site Reliability Engineer (SRE) specializing in log analysis.",
@@ -80,6 +86,8 @@ export class LogTriageAgent {
         createTicket: createTicketTool,
       },
       toolChoice: "auto",
+      temperature: 0.1,
+      maxOutputTokens: 400,
     });
 
     if (response.toolCalls?.length) {
