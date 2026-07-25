@@ -34,6 +34,38 @@ const createTicketTool = tool({
   },
 }) as any;
 
+const toolRegistry = {
+  createTicket: createTicketTool as any,
+};
+
+async function executeToolCalls(toolCalls: Array<{ toolName: string; input: any }>) {
+  const toolResponses: string[] = [];
+
+  for (const toolCall of toolCalls) {
+    const tool = toolRegistry[toolCall.toolName as keyof typeof toolRegistry];
+
+    if (!tool?.execute) {
+      toolResponses.push(
+        `Tool error for ${toolCall.toolName}: Tool is not available.`,
+      );
+      continue;
+    }
+
+    try {
+      const toolResult = await tool.execute(toolCall.input, {} as any);
+      toolResponses.push(
+        `Tool result for ${toolCall.toolName}:\n${JSON.stringify(toolResult, null, 2)}`,
+      );
+    } catch (error) {
+      toolResponses.push(
+        `Tool error for ${toolCall.toolName}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  return toolResponses;
+}
+
 export class LogTriageAgent {
   private logsFileNumber: number;
   private readonly initialLogs: LogEntry[];
@@ -88,20 +120,22 @@ export class LogTriageAgent {
     ];
 
     let messages = [...initialMessages];
+    const maxToolTurns = 2;
+    let toolTurnCount = 0;
 
     let response = await generateText({
       model: google("gemini-1.5-flash"),
       system: systemPrompt,
       messages,
-      tools: {
-        createTicket: createTicketTool as any,
-      },
+      tools: toolRegistry,
       toolChoice: "auto",
       temperature: 0.1,
       maxOutputTokens: 400,
     });
 
-    if (response.toolCalls?.length) {
+    while (toolTurnCount < maxToolTurns && response.toolCalls?.length) {
+      toolTurnCount += 1;
+
       console.log(
         chalk.yellow(
           `\n🛠️ Tool call(s) requested: ${response.toolCalls
@@ -110,48 +144,29 @@ export class LogTriageAgent {
         ),
       );
 
-      const toolCall = response.toolCalls[0];
-      if (toolCall.toolName === "createTicket") {
-        const toolInput = toolCall.input as {
-          title?: string;
-          summary?: string;
-          severity?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-        };
+      const toolResponses = await executeToolCalls(response.toolCalls);
 
-        const toolResult = await createTicketTool.execute?.(
-          {
-            title: toolInput.title ?? "Production incident",
-            summary:
-              toolInput.summary ?? "Incident detected from log analysis.",
-            severity: toolInput.severity ?? "MEDIUM",
-          },
-          {} as any,
-        );
+      messages = [
+        ...messages,
+        {
+          role: "assistant" as const,
+          content: response.text || "",
+        } as any,
+        {
+          role: "user" as const,
+          content: `${toolResponses.join("\n\n")}\n\nContinue the investigation using this result and the recent logs.`,
+        },
+      ];
 
-        messages = [
-          ...messages,
-          {
-            role: "assistant" as const,
-            content: response.text || "",
-          } as any,
-          {
-            role: "user" as const,
-            content: `Tool result for createTicket:\n${JSON.stringify(toolResult, null, 2)}\n\nContinue the investigation using this result and the recent logs.`,
-          },
-        ];
-
-        response = await generateText({
-          model: google("gemini-1.5-flash"),
-          system: systemPrompt,
-          messages,
-          tools: {
-            createTicket: createTicketTool as any,
-          },
-          toolChoice: "none",
-          temperature: 0.1,
-          maxOutputTokens: 400,
-        });
-      }
+      response = await generateText({
+        model: google("gemini-1.5-flash"),
+        system: systemPrompt,
+        messages,
+        tools: toolRegistry,
+        toolChoice: "auto",
+        temperature: 0.1,
+        maxOutputTokens: 400,
+      });
     }
 
     console.log(chalk.green(`\n🤖 Agent Final Answer:\n${response.text}`));
