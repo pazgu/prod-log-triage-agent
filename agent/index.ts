@@ -281,6 +281,7 @@ export class LogTriageAgent {
       "Do not invent facts. If you identify a clear incident, create a ticket using the createTicket tool.",
       "Use the searchLogsByIdentifier tool to inspect full historical logs for identifiers such as user_id, batch_id, request_id, or source_id.",
       "Use the getRecentChanges tool when a deployment or config change may explain the incident.",
+      "After taking actions or recording notes, always provide a clear, user-facing summary of your findings, root cause, and recommendations.",
     ].join(" ");
 
     const messages = [
@@ -306,7 +307,7 @@ export class LogTriageAgent {
         messages,
         tools,
         toolChoice: "auto",
-        stopWhen: stepCountIs(3),
+        stopWhen: stepCountIs(8),
         maxRetries: 0,
         temperature: 0.1,
         maxOutputTokens: 1000,
@@ -320,14 +321,21 @@ export class LogTriageAgent {
         },
       });
 
+      const allStepTexts = response.steps
+        .map((s) => s.text)
+        .filter(Boolean)
+        .join("\n\n")
+        .trim();
+
+      const mainText = allStepTexts || response.text.trim();
       const toolSummary =
         toolActivityLog.length > 0
-          ? `\n\nTool activity:\n${toolActivityLog.join("\n")}`
+          ? `Tool activity:\n${toolActivityLog.join("\n")}`
           : "";
-      const responseText = (response.text ?? "").trim();
-      const finalText = responseText.includes("Tool activity")
-        ? responseText
-        : `${responseText}${toolSummary}`.trim();
+
+      const finalText = mainText
+        ? `${mainText}\n\n${toolSummary}`.trim()
+        : toolSummary;
 
       console.log(chalk.green(`\n🤖 Agent Final Answer:\n${finalText}`));
       return finalText || "No analysis generated.";

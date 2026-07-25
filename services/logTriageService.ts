@@ -5,7 +5,7 @@ import { loadLogs } from "./logsAndChangesService.js";
 dotenv.config();
 
 // The logs are in increasing order of difficulty for the agent to resolve, so start with #1 and work up to #5
-const LOG_FILE_NUMBER = 1;
+const LOG_FILE_NUMBER = 4;
 
 const activateLogTriageAgent = async (): Promise<string> => {
   const logs = await loadLogs(LOG_FILE_NUMBER);
