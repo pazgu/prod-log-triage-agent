@@ -34,11 +34,27 @@ const createTicketTool = tool({
   },
 }) as any;
 
+const recordInvestigationNoteTool = tool({
+  description: "Record a short investigation note for the current incident.",
+  inputSchema: zodSchema(
+    z.object({
+      note: z.string().describe("Short note summarizing a relevant finding"),
+    }),
+  ),
+  execute: async ({ note }: { note: string }) => {
+    console.log(chalk.cyan(`🗒️ [Tool Action] Investigation Note: ${note}`));
+    return { ok: true, note };
+  },
+}) as any;
+
 const toolRegistry = {
   createTicket: createTicketTool as any,
+  recordInvestigationNote: recordInvestigationNoteTool as any,
 };
 
-async function executeToolCalls(toolCalls: Array<{ toolName: string; input: any }>) {
+async function executeToolCalls(
+  toolCalls: Array<{ toolName: string; input: any }>,
+) {
   const toolResponses: string[] = [];
 
   for (const toolCall of toolCalls) {
