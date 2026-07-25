@@ -32,7 +32,7 @@ const createTicketTool = tool({
     );
     return { ok: true, ticketId, title, summary, severity };
   },
-} as any);
+}) as any;
 
 export class LogTriageAgent {
   private logsFileNumber: number;
@@ -75,15 +75,26 @@ export class LogTriageAgent {
     const systemPrompt = [
       "You are an expert Senior Site Reliability Engineer (SRE) specializing in log analysis.",
       "Investigate the provided logs carefully and prefer concise, evidence-based summaries.",
+      "Keep the initial analysis compact and use only the recent logs provided.",
       "Do not invent facts. If you identify a clear incident, create a ticket using the createTicket tool.",
     ].join(" ");
 
-    const response = await generateText({
+    const initialMessages = [
+      { role: "system" as const, content: systemPrompt },
+      {
+        role: "user" as const,
+        content: `Analyze the following recent production logs for Log Set #${this.logsFileNumber}:\n\n${recentLogsText}`,
+      },
+    ];
+
+    let messages = [...initialMessages];
+
+    let response = await generateText({
       model: google("gemini-1.5-flash"),
       system: systemPrompt,
-      prompt: `Analyze the following recent production logs for Log Set #${this.logsFileNumber}:\n\n${recentLogsText}`,
+      messages,
       tools: {
-        createTicket: createTicketTool,
+        createTicket: createTicketTool as any,
       },
       toolChoice: "auto",
       temperature: 0.1,
@@ -98,6 +109,49 @@ export class LogTriageAgent {
             .join(", ")}`,
         ),
       );
+
+      const toolCall = response.toolCalls[0];
+      if (toolCall.toolName === "createTicket") {
+        const toolInput = toolCall.input as {
+          title?: string;
+          summary?: string;
+          severity?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+        };
+
+        const toolResult = await createTicketTool.execute?.(
+          {
+            title: toolInput.title ?? "Production incident",
+            summary:
+              toolInput.summary ?? "Incident detected from log analysis.",
+            severity: toolInput.severity ?? "MEDIUM",
+          },
+          {} as any,
+        );
+
+        messages = [
+          ...messages,
+          {
+            role: "assistant" as const,
+            content: response.text || "",
+          } as any,
+          {
+            role: "user" as const,
+            content: `Tool result for createTicket:\n${JSON.stringify(toolResult, null, 2)}\n\nContinue the investigation using this result and the recent logs.`,
+          },
+        ];
+
+        response = await generateText({
+          model: google("gemini-1.5-flash"),
+          system: systemPrompt,
+          messages,
+          tools: {
+            createTicket: createTicketTool as any,
+          },
+          toolChoice: "none",
+          temperature: 0.1,
+          maxOutputTokens: 400,
+        });
+      }
     }
 
     console.log(chalk.green(`\n🤖 Agent Final Answer:\n${response.text}`));
