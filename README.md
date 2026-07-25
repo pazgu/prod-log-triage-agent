@@ -38,7 +38,6 @@ An autonomous SRE agent that automates production incident triage, root-cause lo
 | `searchLogsByIdentifier` | Queries historical log streams by `user_id`, `request_id`, or `batch_id` | `{ identifier: z.string() }` |
 | `recordInvestigationNote` | Persists intermediate notes into runtime context | `{ note: z.string() }` |
 | `createTicket` | Generates prioritized Jira/GitHub incident tickets | `{ title, severity, description }` |
-
 ---
 
 ## 📄 Real Execution Output
@@ -59,7 +58,11 @@ Unoptimized connection pooling in 'New recommendations feature' (deployed 17:29:
 ### Action Taken
 - Recorded evidence in system audit logs.
 - Created ticket TICKET-5115 (Severity: HIGH).
-🔑 Environment Setup (.env)
+```
 
+## 🔑 Environment Setup (.env)
+
+```
 GOOGLE_GENERATIVE_AI_API_KEY="your-gemini-api-key"
 MODEL_NAME="gemini-flash-latest"
+```
