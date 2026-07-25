@@ -84,6 +84,45 @@ export class LogTriageAgent {
     this.initialLogs = logs;
   }
 
+  // Fallback analysis in case the AI model fails
+  // Ensures the agent still provides useful insights based on the recent logs.
+  private buildFallbackAnalysis(contextLogs: LogEntry[]): string {
+    const recentLogs = contextLogs.slice(-5);
+    const errorCount = recentLogs.filter(
+      (entry) => entry.level === "ERROR",
+    ).length;
+    const warningCount = recentLogs.filter(
+      (entry) => entry.level === "WARN",
+    ).length;
+    const suspiciousCount = recentLogs.filter((entry) =>
+      /(fail|error|timeout|unavailable|degraded|latency|queue|retry|drop|exception)/i.test(
+        entry.msg,
+      ),
+    ).length;
+    const services = Array.from(
+      new Set(recentLogs.map((entry) => entry.service)),
+    );
+
+    let summary = `Fallback analysis for Log Set #${this.logsFileNumber}: `;
+
+    if (errorCount > 0) {
+      summary += `Detected ${errorCount} error event(s) across ${services.join(", ")}.`;
+    } else if (warningCount > 0 || suspiciousCount > 0) {
+      summary += `Observed ${warningCount + suspiciousCount} warning-like event(s) that may indicate emerging issues.`;
+    } else {
+      summary += "No obvious incident pattern detected in the recent logs.";
+    }
+
+    const evidence = recentLogs
+      .map(
+        (entry) =>
+          `[${entry.time}] ${entry.level} ${entry.service}: ${entry.msg}`,
+      )
+      .join("\n");
+
+    return `${summary}\n\nRecent evidence:\n${evidence}`;
+  }
+
   async run(): Promise<string> {
     console.log(
       chalk.blue(
@@ -128,18 +167,29 @@ export class LogTriageAgent {
       },
     ];
 
-    const response = await generateText({
-      model: google("gemini-1.5-flash"),
-      system: systemPrompt,
-      messages,
-      tools: toolRegistry,
-      toolChoice: "auto",
-      stopWhen: stepCountIs(3),
-      temperature: 0.1,
-      maxOutputTokens: 400,
-    });
+    try {
+      const response = await generateText({
+        model: google("gemini-flash-latest"),
+        messages,
+        tools: toolRegistry,
+        toolChoice: "auto",
+        stopWhen: stepCountIs(3),
+        maxRetries: 0,
+        temperature: 0.1,
+        maxOutputTokens: 1000,
+      });
 
-    console.log(chalk.green(`\n🤖 Agent Final Answer:\n${response.text}`));
-    return response.text || "No analysis generated.";
+      console.log(chalk.green(`\n🤖 Agent Final Answer:\n${response.text}`));
+      return response.text || "No analysis generated.";
+    } catch (error) {
+      const fallbackAnalysis = this.buildFallbackAnalysis(contextLogs);
+      console.warn(
+        chalk.yellow(
+          `⚠️ AI model call failed (${error instanceof Error ? error.message : String(error)}). Using fallback analysis.`,
+        ),
+      );
+      console.log(chalk.yellow(`\n🧠 Fallback Analysis:\n${fallbackAnalysis}`));
+      return fallbackAnalysis;
+    }
   }
 }
